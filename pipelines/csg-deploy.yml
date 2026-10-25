@@ -1,0 +1,69 @@
+# CSG deployment pipeline. Run manually: pick the client, the stage and the action.
+trigger: none
+pr: none
+
+parameters:
+  - name: client
+    displayName: Client folder (clients/<name>)
+    type: string
+    default: lab
+  - name: stage
+    displayName: Terraform stage
+    type: string
+    values:
+      - stage1-foundation
+      - stage2-storage-avd
+      - stage3-hosts
+      - stage4-config
+  - name: action
+    displayName: Action
+    type: string
+    default: plan
+    values:
+      - plan
+      - apply
+
+variables:
+  - group: csg-${{ parameters.client }}   # ARM_CLIENT_ID, ARM_TENANT_ID, ARM_SUBSCRIPTION_ID, ARM_ENVIRONMENT, SERVICE_CONNECTION_ID, DOMAIN_JOIN_PASSWORD
+  - name: workDir
+    value: $(Build.SourcesDirectory)/${{ parameters.stage }}
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+  - stage: Plan
+    jobs:
+      - job: Plan
+        timeoutInMinutes: 30
+        steps:
+          - checkout: self
+          - template: templates/terraform-stage.yml
+            parameters:
+              client: ${{ parameters.client }}
+              stage: ${{ parameters.stage }}
+              command: plan
+          - publish: $(workDir)/tfplan
+            artifact: tfplan
+
+  - ${{ if eq(parameters.action, 'apply') }}:
+    - stage: Apply
+      dependsOn: Plan
+      jobs:
+        - deployment: Apply
+          timeoutInMinutes: 180   # Entra DS takes 45-90 minutes
+          environment: csg-${{ parameters.client }}   # add an approval check on this environment
+          strategy:
+            runOnce:
+              deploy:
+                steps:
+                  - checkout: self
+                  - download: current
+                    artifact: tfplan
+                  - bash: cp $(Pipeline.Workspace)/tfplan/tfplan $(workDir)/tfplan
+                    displayName: Restore plan
+                  - template: templates/terraform-stage.yml
+                    parameters:
+                      client: ${{ parameters.client }}
+                      stage: ${{ parameters.stage }}
+                      command: apply

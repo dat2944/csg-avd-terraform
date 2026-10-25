@@ -1,0 +1,41 @@
+parameters:
+  - name: client
+    type: string
+  - name: stage
+    type: string
+  - name: command
+    type: string   # plan | apply
+
+steps:
+  - bash: |
+      set -euo pipefail
+      terraform version
+      terraform init -input=false \
+        -backend-config="../clients/${{ parameters.client }}/backend.hcl" \
+        -backend-config="key=${{ parameters.client }}/${{ parameters.stage }}.tfstate"
+      if [ "${{ parameters.command }}" = "plan" ]; then
+        terraform plan -input=false \
+          -var-file="../clients/${{ parameters.client }}/client.tfvars" \
+          -out=tfplan
+      else
+        terraform apply -input=false -auto-approve tfplan
+      fi
+    displayName: terraform ${{ parameters.command }} (${{ parameters.stage }})
+    workingDirectory: $(Build.SourcesDirectory)/${{ parameters.stage }}
+    env:
+      # Workload identity federation through the service connection. The
+      # providers request fresh tokens from Azure DevOps as needed, so a
+      # 90-minute Entra DS apply does not outlive its token.
+      ARM_USE_OIDC: "true"
+      ARM_USE_AZUREAD: "true"
+      ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+      ARM_TENANT_ID: $(ARM_TENANT_ID)
+      ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+      ARM_ENVIRONMENT: $(ARM_ENVIRONMENT)
+      ARM_ADO_PIPELINE_SERVICE_CONNECTION_ID: $(SERVICE_CONNECTION_ID)
+      ARM_OIDC_AZURE_SERVICE_CONNECTION_ID: $(SERVICE_CONNECTION_ID)
+      ARM_OIDC_REQUEST_TOKEN: $(System.AccessToken)
+      ARM_OIDC_REQUEST_URL: $(System.OidcRequestUri)
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+      TF_IN_AUTOMATION: "true"
+      TF_VAR_domain_join_password: $(DOMAIN_JOIN_PASSWORD)
